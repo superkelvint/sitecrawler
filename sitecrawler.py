@@ -16,7 +16,7 @@ from selectolax.parser import HTMLParser, Node
 from tldextract import tldextract
 from usp.tree import sitemap_tree_for_homepage
 
-from crawler import AsyncCrawler
+from aiocrawler import AsyncCrawler
 from lmdb_collection import LmdbmDocumentCollection
 
 global_excludes = {"\\.jpg", "\\.jpeg", "\\.png", "\\.mp4", "\\.webp", "\\.gif", "\\.css", "\\.js", "\\.pdf"}
