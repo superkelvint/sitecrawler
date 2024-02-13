@@ -35,6 +35,8 @@ It is designed for speed:
 ## Installation
 
 ```bash
+git clone https://github.com/superkelvint/sitecrawler
+cd sitecrawler
 docker compose up --build
 ```
 
