@@ -1,73 +1,163 @@
-AIOCrawler
-==========
-[![Build Status](https://travis-ci.org/tapanpandita/aiocrawler.svg?branch=master)](https://travis-ci.org/tapanpandita/aiocrawler)
-[![Codacy Badge](https://api.codacy.com/project/badge/Grade/eab04685503c490082f1c6a545c4016e)](https://www.codacy.com/app/tapanpandita/aiocrawler?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=tapanpandita/aiocrawler&amp;utm_campaign=Badge_Grade)
-[![PyPI version](https://badge.fury.io/py/pyaiocrawler.svg)](https://badge.fury.io/py/pyaiocrawler)
+# SiteCrawler
 
-Asynchronous web crawler built on [asyncio](https://docs.python.org/3/library/asyncio.html)
+A Python [asyncio](https://docs.python.org/3/library/asyncio.html) website crawler that uses a simple stack:
 
-Installation
-------------
-```shell
-pip install pyaiocrawler
+1. [LMDB](https://lmdb.readthedocs.io/en/release/) for saving downloaded URLs
+2. [Celery](https://docs.celeryq.dev/en/stable/index.html) over [Redis](https://redis.io) for work queue management
+3. [FastAPI](https://fastapi.tiangolo.com/) provides a thin API wrapper over the crawler 
+
+It was forked from [https://github.com/tapanpandita/aiocrawler](https://github.com/tapanpandita/aiocrawler) (MIT licensed).
+
+It is designed for speed:
+
+- asyncio
+- selectolax for fast HTML parsing
+- LMDB for high read/write performance
+
+## Features
+- [x] Multiple starting URLs
+- [x] Configurable metadata extraction using CSS selectors and regex
+- [x] Limit depth of crawl
+- [x] Limit number of pages crawled
+- [x] Configurable concurrency
+- [x] Download sitemaps
+- [x] FastAPI API server
+- [x] Celery integration
+- [x] Dockerized
+- [ ] Scheduling crawls
+- [ ] Return full downloaded content via /browse API
+- [ ] Standard webpage metadata extractors
+- [ ] Integrate with unstructured to extract text from PDF, docx, pptx etc
+- [ ] Javascript rendering/parsing via https://splash.readthedocs.io/en/stable/
+- [ ] content_css_selector
+- [ ] if_modified_since_hours
+
+## Installation
+
+```bash
+docker compose up --build
 ```
-Usage
------
-### Generating sitemap
-```python
-import asyncio
-from aiocrawler import SitemapCrawler
 
-crawler = SitemapCrawler('https://www.google.com', depth=3)
-sitemap = asyncio.run(crawler.get_results())
+The FastAPI crawler API server is now available at [http://localhost:8000](http://localhost:8000).
+The OpenAPI spec is available at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+## Starting your first crawl
+
+```bash
+curl -X POST http://localhost:8000/crawl \
+ -H "Content-Type: application/json" \
+ -d '{"name": "supermind", "starting_urls": ["https://www.supermind.org/"], "max_pages": 200, "concurrency": 5, "extraction_rules": {"rules": [{"field_name": "title", "regex": "<title>(.*?)</title>"}]}}'
 ```
-### Configuring the crawler
-```python
-from aiocrawler import SitemapCrawler
 
-crawler = SitemapCrawler(
-    init_url='https://www.google.com', # The base URL to start crawling from
-    depth=3,                           # The maximum depth to crawl till
-    concurrency=300,                   # Maximum concurrent requests to make
-    max_retries=3,                     # Maximum times the crawler will retry to get a response from a URL
-    user_agent='My Crawler',           # Use a custom user agent for requests
-)
+This starts a crawl on supermind.org limited to 200 pages with a concurrency of 5.
+
+The above command should return a UUID response like so:
+
+```bash
+{"id":"f339cef3-9839-476d-acdf-b61548515a93"} 
 ```
-### Extending the crawler
-To create your own crawler, simply subclass `AIOCrawler` and implement the `parse` method. For every page crawled, the `parse` method is executed with the url of the page, the links in that page and the html of the page. The return of the `parse` method is appended to an array which is then available when the `get_results` method is called. We have implemented an example crawler here that extracts the title from the page.
-```python
-import asyncio
-from aiocrawler import AIOCrawler
-from bs4 import BeautifulSoup          # We will use beautifulsoup to extract the title from the html
-from typing import Set, Tuple
 
+This is your job id. You can inspect the result of your crawl like so:
 
-class TitleScraper(AIOCrawler):
-    '''
-    Subclasses AIOCrawler to extract titles for the pages on the given domain
-    '''
-    timeout = 10
-    max_redirects = 2
-
-    def parse(self, url: str, links: Set[str], html: bytes) -> Tuple[str, str]:
-        '''
-        Returns the url and the title of the url
-        '''
-        soup = BeautifulSoup(html, 'html.parser')
-        title = soup.find('title').string
-        return url, title
-
-
-crawler = TitleScraper('https://www.google.com', 3)
-titles = asyncio.run(crawler.get_results())
+```bash
+curl http://localhost:8000/crawl/f339cef3-9839-476d-acdf-b61548515a93
 ```
-Contributing
-------------
-### Installing dependencies
-```shell
-pipenv install --dev
+
+After the crawl is completed, you should see a response like:
+
+```json
+{
+  "id": "f339cef3-9839-476d-acdf-b61548515a93",
+  "status": "SUCCESS",
+  "info": {
+    "name": "supermind",
+    "stats": {
+      "total": 201,
+      "cached": 191,
+      "cached_redirects": 2,
+      "fetched": 8,
+      "new_or_updated": 8
+    },
+    "start_time": "2024-02-12 05:13:38.358572+0000 (UTC)",
+    "end_time": "2024-02-12 05:13:41.063751+0000 (UTC)",
+    "duration": "2.705178737640381 seconds"
+  }
+}  
 ```
-### Running tests
-```shell
-pytest --cov=aiocrawler
+
+
+## Design choices
+This is not a distributed crawler. The entire crawl runs within a single Celery worker in an async fashion. 
+It is very fast, especially if you set a high concurrency. 
+
+Hitting a single host from a single crawler node, we can easily hit 50 URLs/s with concurrency of 10.  
+
+The crawl job runs in 2 phases:
+1. download all URLs
+2. parse and extract
+
+Each phase runs as a separate Celery task. This means it should be possible to have different workers doing different tasks. 
+
+## Crawler configuration
+| **Name**                        | **Type**        | **Default**     | **Description**                                                                                                                                                                                                        |
+|---------------------------------|-----------------|-----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **name**                        | string          |                 | Name of the crawl (required)                                                                                                                                                                                           |
+| **starting_urls**               | list of strings |                 | Starting URLs (required)                                                                                                                                                                                               |
+| **allowed_domains**             | list of strings |                 | Allowed domains. Additive with allow_starting_url_hostname and allow_starting_url_tld.                                                                                                                                 |
+| **allowed_regex**               | list of strings |                 | URLs matching with these regexes will be allowed.                                                                                                                                                                      |
+| **denied_regex**                | list of strings |                 | URLs matching with these regexes will not be crawled.                                                                                                                                                                  |
+| **denied_extensions**           | list of strings |                 | URLs ending with these extensions will not be crawled.                                                                                                                                                                 |
+| **is_sitemap**                  | boolean         | false           | If true, all the starting URLs will be treated as sitemaps. The entire sitemaps will be downloaded, all the URLs collected and crawled to a depth of 1. No URLs other than what is in the sitemaps will be downloaded. |
+| **max_depth**                   | number          | 300             | Maximum crawler depth. The starting URL is depth of 1.                                                                                                                                                                 |
+| **max_pages**                   | number          | -1              | Max number of pages to crawl. -1 means no limit (default)                                                                                                                                                              |
+| **concurrency**                 | number          | 10              | Simultaneous crawler connections.                                                                                                                                                                                      |
+| **allow_starting_url_hostname** | boolean         | true            | Allow all links with the same hostname as starting URLs.                                                                                                                                                               |
+| **allow_starting_url_tld**      | boolean         | false           | Allow all links with the same TLD as starting URLs.                                                                                                                                                                    |
+| **user_agent**                  | string          | SiteCrawler/1.0 | Crawler user-agent.                                                                                                                                                                                                    |
+| **extraction_rules**            | dictionary      |                 | See ExtractionRules section.                                                                                                                                                                                           |
+
+### Example
+```json
+{
+  "name": "supermind",
+  "starting_urls": [
+    "https://www.supermind.org/"
+  ],
+  "max_pages": 200,
+  "concurrency": 5,
+  "extraction_rules": {
+    "rules": [
+      {
+        "field_name": "title",
+        "regex": "<title>(.*?)</title>"
+      },
+      {
+        "field_name": "description",
+        "css": "meta[name=description]",
+        "attribute": "content"
+      }
+    ]
+  }
+}
 ```
+
+## Extraction Rules
+| **Name**       | **Type** | **Description**                                                                                                    |
+|----------------|----------|--------------------------------------------------------------------------------------------------------------------|
+| **field_name** | string   | Name of the field                                                                                                  |
+| **css**        | string   | CSS selector.                                                                                                      |
+| **regex**      | string   | Regex. There must be 1 matching group.                                                                             |
+| **delimiter**  | string   | Not currently used.                                                                                                |
+| **attribute**  | string   | **CSS only**. If specifed, the HTML element attribute it extracted. Otherwise, the element text is used (default). |
+
+There should only be either `css` or `regex` declared. If both are declared, `css` is used. 
+
+
+## Contributing
+
+The 4 files of interest are:
+
+- sitecrawler.py: the main crawler logic
+- aiocrawler.py: the crawler base class that handles most of the async fetching operations
+- main.py: the FastAPI wrapper around the crawler
+- tasks.py: submits jobs to celery

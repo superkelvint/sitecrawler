@@ -1,20 +1,16 @@
-'''
-A webcrawler built on asyncio and aiohttp
-'''
 import asyncio
 import logging
 from dataclasses import dataclass
-from urllib.parse import urljoin, urlparse
-from typing import Set, Iterable, List, Tuple, Dict, Optional
+from typing import Set, List, Tuple, Optional, Union
+from urllib.parse import urljoin, urldefrag
 
-from aiohttp import ClientSession, ClientResponseError, ClientTimeout
 from aiohttp import ClientConnectionError, ClientPayloadError
+from aiohttp import ClientSession, ClientResponseError, ClientTimeout
 from aiohttp.client_exceptions import TooManyRedirects
-from bs4 import BeautifulSoup  # type: ignore
-from bs4.element import Tag  # type: ignore
+from multidict import CIMultiDictProxy
+from selectolax.parser import HTMLParser
 
-
-logger = logging.getLogger('AIOCrawler')
+logger = logging.getLogger('AsyncCrawler')
 
 
 class InvalidContentTypeError(Exception):
@@ -26,14 +22,20 @@ class InvalidContentTypeError(Exception):
         self.response = response
 
 
+class AlreadyFetchedError(Exception):
+    def __init__(self):
+        pass
+
+
 @dataclass
 class TaskQueueMessage:
+    source_url: str
     url: str
     depth: int
     retry_count: int
 
 
-class AIOCrawler:
+class AsyncCrawler:
     '''
     Crawler baseclass that concurrently crawls multiple pages till provided depth
     Built on asyncio
@@ -41,7 +43,7 @@ class AIOCrawler:
 
     timeout: int = 30
     max_redirects: int = 10
-    valid_content_types: Set[str] = {
+    html_content_types: Set[str] = {
         'text/html',
         'text/xhtml',
         'application/xhtml+xml',
@@ -49,34 +51,42 @@ class AIOCrawler:
         'application/html',
     }
 
+    binary_content_types: Set[str] = {
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/epub+zip',
+    }
+
     def __init__(
-        self,
-        init_url: str,
-        depth: int = 1,
-        concurrency: int = 100,
-        max_retries: int = 2,
-        user_agent: str = 'AIOCrawler',
+            self,
+            starting_urls: list[str],
+            max_depth: int = 1,
+            max_pages: int = -1,
+            concurrency: int = 100,
+            max_retries: int = 2,
+            user_agent: str = 'AsyncCrawler',
     ) -> None:
         '''
         Initialize State
         '''
-        self.init_url = init_url
-        self.depth = depth
+        self.starting_urls = starting_urls
+        self.max_depth = max_depth
+        self.max_pages = max_pages
         self.concurrency = concurrency
         self.max_retries = max_retries
         self.user_agent = user_agent
-        self.base_url: str = '{}://{}'.format(
-            urlparse(self.init_url).scheme, urlparse(self.init_url).netloc
-        )
         self.crawled_urls: Set[str] = set()
         self.results: List = []
         self.session: Optional[ClientSession] = None
         self.task_queue: Optional[asyncio.Queue] = None
 
-    async def _make_request(self, url: str) -> str:
-        '''
+    async def _make_request(self, url: str) -> Tuple[str, str, Union[str,bytes], CIMultiDictProxy[str, str]]:
+        """
         Wrapper on aiohttp to make get requests on a shared session
-        '''
+        :param url: the url to fetch
+        :return: tuple of actual url (if redirected) and html
+        """
         if not self.session:
             self.session = ClientSession()
 
@@ -85,51 +95,65 @@ class AIOCrawler:
         timeout = ClientTimeout(total=self.timeout)
 
         async with self.session.get(
-            url,
-            headers=headers,
-            raise_for_status=True,
-            timeout=timeout,
-            max_redirects=self.max_redirects,
+                url,
+                headers=headers,
+                raise_for_status=True,
+                timeout=timeout,
+                max_redirects=self.max_redirects,
+                verify_ssl=False,
         ) as response:
 
-            if response.content_type not in self.valid_content_types:
+            actual_url = response.url.human_repr()
+            if actual_url != url:
+                # We were redirected to a new URL
+                # check that we haven't already fetched the new URL. If so, let's ignore
+                if response.url in self.crawled_urls:
+                    raise AlreadyFetchedError()
+
+            if response.content_type in self.html_content_types:
+                html = await response.text()
+                return "text/html", actual_url, html, response.headers
+            elif response.content_type in self.binary_content_types:
+                content = await response.read()
+                return response.content_type, actual_url, content, response.headers
+            else:
                 raise InvalidContentTypeError(response)
 
-            html = await response.text()
-            return html
-
-    def normalize_urls(self, urls: Iterable[Tag]) -> Set[str]:
-        '''
-        Normalizes passed urls - Adds domain to relative links
-        and ignores links from other domains
-        '''
-        links = {
-            urljoin(self.base_url, url['href'])
-            for url in urls
-            if urljoin(self.base_url, url['href']).startswith(self.base_url)
-        }
-        return links
-
-    def find_links(self, html: str) -> Set[str]:
+    def extract_links(self, url: str, html: str) -> Set[str]:
         '''
         Finds all the links in passed html
         '''
-        soup = BeautifulSoup(html, 'html.parser')
-        links = self.normalize_urls(soup.select('a[href]'))
+        links = set()
+        dom = HTMLParser(html)
+        for tag in dom.css('a'):
+            attrs = tag.attributes
+            if 'href' in attrs:
+                href = attrs['href']
+                if not href or href.startswith('mailto:'):
+                    continue
+                href = urldefrag(urljoin(url, href))[0]
+                links.add(href)
+        links = {x for x in links if self.valid_link(url, x)}
         return links
 
-    def parse(self, url: str, links: Set[str], html: str):
+    def valid_link(self, url: str, link: str):
+        return True
+
+    def output(self, content_type: str, url: str, links: Set[str], content: Union[str, bytes], headers: CIMultiDictProxy[str]) -> Optional[Tuple[str, str]]:
         raise NotImplementedError(
-            '{}.parse callback is not defined'.format(self.__class__.__name__)
+            '{}.output callback is not defined'.format(self.__class__.__name__)
         )
 
-    async def crawl_page(self, url: str) -> Tuple[str, Set[str], str]:
+    async def crawl_page(self, url: str) -> Tuple[str, str, Set[str], Union[str, bytes], CIMultiDictProxy[str, str]]:
         '''
         Request a webpage and return all relevant data from it
         '''
-        html = await self._make_request(url)
-        links = self.find_links(html)
-        return url, links, html
+        content_type, actual_url, content, headers = await self._make_request(url)
+        if content_type == "text/html":
+            links = self.extract_links(actual_url, content)
+        else:
+            links = None
+        return content_type, actual_url, links, content, headers
 
     async def retry_task(self, task):
         '''
@@ -137,7 +161,7 @@ class AIOCrawler:
         '''
         if task.retry_count < self.max_retries:
             self.crawled_urls.discard(task.url)
-            task_message = TaskQueueMessage(task.url, task.depth, task.retry_count + 1)
+            task_message = TaskQueueMessage(task.source_url, task.url, task.depth, task.retry_count + 1)
             await self.task_queue.put(task_message)
         else:
             logger.error(f'Max retries exceeded for url: {task.url}')
@@ -154,63 +178,77 @@ class AIOCrawler:
             task = await self.task_queue.get()
             logger.debug(f'Working on {task.url} at {task.depth}')
 
-            if (task.depth >= self.depth) or (task.url in self.crawled_urls):
+            if (task.depth >= self.max_depth) or (task.url in self.crawled_urls):
                 self.task_queue.task_done()
                 logger.debug('Max depth reached')
+                continue
+
+            if (self.max_pages > 0) and (len(self.crawled_urls) > self.max_pages):
+                self.task_queue.task_done()
+                logger.debug('Max pages reached')
                 continue
 
             self.crawled_urls.add(task.url)
 
             try:
-                url, links, html = await self.crawl_page(task.url)
+                content_type, url, links, content, headers = await self.crawl_page(task.url)
             except InvalidContentTypeError as excp:
-                logger.error(
-                    f'Non html content type received in response at url: {task.url}'
-                )
+                pass
+            except AlreadyFetchedError as excp:
+                pass
             except TooManyRedirects as excp:
-                logger.error(f'Redirected too many times at url: {task.url}')
+                self.log_error_url(task.url, "too_many_redirects", f'Redirected too many times at url: {task.url}')
             except ClientPayloadError as excp:
-                logger.error(f'Invalid compression or encoding at url: {task.url}')
+                self.log_error_url(task.url, "invalid_encoding", f'Invalid compression or encoding at url: {task.url}')
             except asyncio.TimeoutError as excp:
-                logger.error(f'Timeout at url: {task.url}, retrying ....')
-                await self.retry_task(task)
+                self.log_error_url(task.url, "timeout", f'Timeout: {task.url}')
+                # await self.retry_task(task)
             except ClientResponseError as excp:
-
                 if excp.status > 499:
-                    logger.error(f'Server error at url: {task.url}, retrying ....')
-                    await self.retry_task(task)
+                    self.log_error_url(task.url, excp.status, f'Server error at url: {task.url}')
                 else:
-                    logger.error(
-                        f'Client error with status: {excp.status} at url: {task.url}'
-                    )
-
+                    self.log_error_url(task.url, excp.status,
+                                       f'Client error with status: {excp.status} at url: {task.url} from {task.source_url}')
             except ClientConnectionError as excp:
-                logger.error(f'Connection error at url: {task.url}, retrying ....')
-                await self.retry_task(task)
+                self.log_error_url(task.url, "connection_error", f'Connection error at url: {task.url}, skipping ....')
+                # await self.retry_task(task)
             except Exception as excp:
-                logger.error(f'Unhandled exception: {type(excp)} {excp}')
+                self.log_error_url(task.url, "exception", f'Unhandled exception: {type(excp)} {excp}')
             else:
-                self.results.append(self.parse(url, links, html))
+                result = self.output(content_type, url, links, content, headers)
+                if result:
+                    self.results.append(result)
 
-                for link in links.difference(self.crawled_urls):
-                    task_message = TaskQueueMessage(link, task.depth + 1, 0)
-                    await self.task_queue.put(task_message)
+                if links:
+                    for link in links.difference(self.crawled_urls):
+                        task_message = TaskQueueMessage(url, link, task.depth + 1, 0)
+                        await self.task_queue.put(task_message)
             finally:
                 self.task_queue.task_done()
+
+    def log_error_url(self, url, error_code: int, error_message: str):
+        logger.error(url, error_code, error_message)
+
+
+    def crawl_completed(self):
+        pass
 
     async def crawl(self) -> None:
         '''
         Starts concurrent workers and kickstarts scraping
         '''
         self.task_queue = asyncio.Queue()
-        task_message = TaskQueueMessage(self.init_url, 0, 0)
-        self.task_queue.put_nowait(task_message)
+        for url in self.starting_urls:
+            task_message = TaskQueueMessage(url, url, 0, 0)
+            self.task_queue.put_nowait(task_message)
         workers = [asyncio.create_task(self.worker()) for i in range(self.concurrency)]
 
         await self.task_queue.join()
 
         for worker in workers:
             worker.cancel()
+
+        self.crawl_completed()
 
         if self.session:
             await self.session.close()
@@ -221,36 +259,3 @@ class AIOCrawler:
         '''
         await self.crawl()
         return self.results
-
-
-class SitemapCrawler(AIOCrawler):
-    '''
-    Subclasses AIOCrawler to generate a sitemap for a given domain.
-    Call `get_results` to access the sitemap.
-    '''
-
-    def parse(self, url: str, links: Set[str], html: str) -> Tuple[str, Set[str]]:
-        '''
-        Return a tuple to create the sitemap
-        '''
-        return url, links
-
-
-if __name__ == '__main__':
-    import argparse
-    import pprint
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-u', action='store', dest='init_url', type=str)
-    parser.add_argument('-d', action='store', dest='depth', default=1, type=int)
-    parser.add_argument('-c', action='store', dest='concurrency', default=100, type=int)
-    parser.add_argument('-r', action='store', dest='max_retries', default=2, type=int)
-    results = parser.parse_args()
-
-    crawler = SitemapCrawler(
-        results.init_url, results.depth, results.concurrency, results.max_retries
-    )
-    sitemap = asyncio.run(crawler.get_results())
-
-    pp = pprint.PrettyPrinter()
-    pp.pprint(sitemap)

@@ -1,0 +1,46 @@
+version: '3.8'
+services:
+  crawler_api:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    volumes:
+      - ./data:/app/data
+      - .:/app
+    environment:
+      - BROKER_URL=redis://redis:6379
+      - RESULT_BACKEND=redis://redis:6379
+  redis:
+    image: redis:6.2-alpine
+    restart: always
+    command: redis-server --save 20 1 --loglevel warning
+    volumes:
+      - redis:/data
+  celery-worker:
+    build: .
+    command: [ 'celery', '-A', 'tasks', 'worker', '-l', 'info' ]
+    depends_on:
+      - redis
+    environment:
+      - BROKER_URL=redis://redis:6379
+      - RESULT_BACKEND=redis://redis:6379
+    volumes:
+      - .:/app
+  flower:
+    image: mher/flower:0.9.7
+    command: flower --broker=redis://redis:6379 --port=5555
+    ports:
+      - "5555:5555"
+    environment:
+      - FLOWER_UNAUTHENTICATED_API=true
+    depends_on:
+      - redis
+  unstructured:
+    image: downloads.unstructured.io/unstructured-io/unstructured-api:latest
+    ports:
+      - "8005:8000"
+volumes:
+  redis:
+    driver: local
