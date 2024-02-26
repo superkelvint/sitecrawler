@@ -65,6 +65,9 @@ class SiteCrawler(AsyncCrawler):
                  init_collection: bool = True
                  # primarily used for testing purposes to bypass creation of lmdb collection
                  ) -> None:
+        if (isinstance(starting_urls, str)):
+            starting_urls = [starting_urls]
+
         if is_sitemap:
             max_depth = 1
             leaf_urls = set()
@@ -370,3 +373,20 @@ def do_extraction(crawler):
                 print(k, result)
                 v["parsed_hash"] = parsed_hash
                 crawler.collection[k] = v
+
+
+if __name__ == '__main__':
+    import sys
+    import asyncio
+    from collections import defaultdict
+
+    d = defaultdict(list)
+    for k, v in ((k.lstrip('-'), v) for k, v in (a.split('=') for a in sys.argv[1:])):
+        d[k].append(v)
+    for k in (k for k in d if len(d[k]) == 1):
+        d[k] = d[k][0]
+    print("Sitecrawler parameters:", d)
+    crawler = SiteCrawler(**dict(d))
+    asyncio.run(crawler.get_results())
+    print(crawler.stats)
+    do_extraction(crawler)
