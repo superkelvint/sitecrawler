@@ -65,7 +65,7 @@ class AsyncCrawler:
             max_pages: int = -1,
             concurrency: int = 100,
             max_retries: int = 2,
-            user_agent: str = 'AsyncCrawler',
+            headers: dict = None,
     ) -> None:
         '''
         Initialize State
@@ -75,13 +75,14 @@ class AsyncCrawler:
         self.max_pages = max_pages
         self.concurrency = concurrency
         self.max_retries = max_retries
-        self.user_agent = user_agent
+        self.headers = headers
         self.crawled_urls: Set[str] = set()
         self.results: List = []
         self.session: Optional[ClientSession] = None
         self.task_queue: Optional[asyncio.Queue] = None
 
-    async def _make_request(self, url: str) -> Tuple[str, str, Union[str,bytes], CIMultiDictProxy[str, str]]:
+    async def _make_request(self, url: str) -> Tuple[
+        str, str, Union[str, bytes], CIMultiDictProxy[str, str]]:
         """
         Wrapper on aiohttp to make get requests on a shared session
         :param url: the url to fetch
@@ -91,12 +92,11 @@ class AsyncCrawler:
             self.session = ClientSession()
 
         logging.debug(f'Fetching: {url}')
-        headers = {'User-Agent': self.user_agent}
         timeout = ClientTimeout(total=self.timeout)
 
         async with self.session.get(
                 url,
-                headers=headers,
+                headers=self.headers,
                 raise_for_status=True,
                 timeout=timeout,
                 max_redirects=self.max_redirects,
@@ -139,7 +139,8 @@ class AsyncCrawler:
     def valid_link(self, url: str, link: str):
         return True
 
-    def output(self, content_type: str, url: str, links: Set[str], content: Union[str, bytes], headers: CIMultiDictProxy[str]) -> Optional[Tuple[str, str]]:
+    def output(self, content_type: str, url: str, links: Set[str], content: Union[str, bytes],
+               response_headers: CIMultiDictProxy[str]) -> Optional[Tuple[str, str]]:
         raise NotImplementedError(
             '{}.output callback is not defined'.format(self.__class__.__name__)
         )
@@ -148,12 +149,12 @@ class AsyncCrawler:
         '''
         Request a webpage and return all relevant data from it
         '''
-        content_type, actual_url, content, headers = await self._make_request(url)
+        content_type, actual_url, content, response_headers = await self._make_request(url)
         if content_type == "text/html":
             links = self.extract_links(actual_url, content)
         else:
             links = None
-        return content_type, actual_url, links, content, headers
+        return content_type, actual_url, links, content, response_headers
 
     async def retry_task(self, task):
         '''
@@ -191,7 +192,7 @@ class AsyncCrawler:
             self.crawled_urls.add(task.url)
 
             try:
-                content_type, url, links, content, headers = await self.crawl_page(task.url)
+                content_type, url, links, content, response_headers = await self.crawl_page(task.url)
             except InvalidContentTypeError as excp:
                 pass
             except AlreadyFetchedError as excp:
@@ -215,7 +216,7 @@ class AsyncCrawler:
             except Exception as excp:
                 self.log_error_url(task.url, "exception", f'Unhandled exception: {type(excp)} {excp}')
             else:
-                result = self.output(content_type, url, links, content, headers)
+                result = self.output(content_type, url, links, content, response_headers)
                 if result:
                     self.results.append(result)
 
@@ -228,7 +229,6 @@ class AsyncCrawler:
 
     def log_error_url(self, url, error_code: int, error_message: str):
         logger.error(url, error_code, error_message)
-
 
     def crawl_completed(self):
         pass

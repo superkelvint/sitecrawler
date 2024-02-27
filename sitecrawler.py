@@ -58,6 +58,7 @@ class SiteCrawler(AsyncCrawler):
                  cache_ttl_hours: float = -1,
                  allow_starting_url_hostname=True,
                  allow_starting_url_tld=False,
+                 headers=None,
                  content_css_selector: str = None,
                  extraction_rules: Union[ExtractionRules, str, dict] = None,
                  user_agent: str = 'SiteCrawler/1.0',
@@ -67,6 +68,11 @@ class SiteCrawler(AsyncCrawler):
                  ) -> None:
         if (isinstance(starting_urls, str)):
             starting_urls = [starting_urls]
+
+        if headers is None:
+            headers = {}
+        if not "User-Agent" in headers:
+            headers["User-Agent"] = user_agent
 
         if is_sitemap:
             max_depth = 1
@@ -79,11 +85,11 @@ class SiteCrawler(AsyncCrawler):
             super().__init__(starting_urls=list(leaf_urls), max_depth=max_depth,
                              max_pages=max_pages,
                              concurrency=concurrency,
-                             max_retries=max_retries, user_agent=user_agent)
+                             max_retries=max_retries, headers=headers)
         else:
             super().__init__(starting_urls=starting_urls, max_depth=max_depth, max_pages=max_pages,
                              concurrency=concurrency,
-                             max_retries=max_retries, user_agent=user_agent)
+                             max_retries=max_retries, headers=headers)
         if denied_extensions is None:
             denied_extensions = []
         if denied_regex is None:
@@ -94,6 +100,7 @@ class SiteCrawler(AsyncCrawler):
             allowed_domains = list()
         if extraction_rules is None:
             extraction_rules = ExtractionRules(rules=[])
+
         self.allowed_domains = allowed_domains
         self.allowed_regex = allowed_regex
         self.denied_regex = denied_regex + list(global_excludes)
@@ -287,7 +294,7 @@ class SiteCrawler(AsyncCrawler):
         logging.error(url, error_code, error_message)
 
     def output(self, content_type: str, url: str, links: Set[str], content: Union[str, bytes],
-               headers: CIMultiDictProxy[str]) -> Optional[Tuple[str, str]]:
+               response_headers: CIMultiDictProxy[str]) -> Optional[Tuple[str, str]]:
         """
         Write the content to the LMDB collection.
         :param content_type:
@@ -302,23 +309,23 @@ class SiteCrawler(AsyncCrawler):
                 self.stats["new_or_updated"] += 1
                 if content_type == "text/html":
                     self.collection.add_html(url, content, type="content", parsed_hash="", crawled=time.time(),
-                                             server_last_modified=headers.get("Last-Modified"))
+                                             server_last_modified=response_headers.get("Last-Modified"))
                 else:
                     self.collection.add_binary(url, content, content_type, type="content", parsed_hash="",
-                                               crawled=time.time(), server_last_modified=headers.get("Last-Modified"))
+                                               crawled=time.time(), server_last_modified=response_headers.get("Last-Modified"))
             else:
                 # compare the last modified dates
-                server_last_modified = headers.get("Last-Modified")
+                server_last_modified = response_headers.get("Last-Modified")
                 cached = self.collection[url]
                 if server_last_modified and cached["server_last_modified"] != server_last_modified:
                     self.stats["new_or_updated"] += 1
                     if content_type == "text/html":
                         self.collection.add_html(url, content, type="content", parsed_hash="", crawled=time.time(),
-                                                 server_last_modified=headers.get("Last-Modified"))
+                                                 server_last_modified=response_headers.get("Last-Modified"))
                     else:
                         self.collection.add_binary(url, content, content_type, type="content", parsed_hash="",
                                                    crawled=time.time(),
-                                                   server_last_modified=headers.get("Last-Modified"))
+                                                   server_last_modified=response_headers.get("Last-Modified"))
 
         except Exception as e:
             print("Error saving", url, e)
