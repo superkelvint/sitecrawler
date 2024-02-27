@@ -155,6 +155,37 @@ Each phase runs as a separate Celery task. This means it should be possible to h
 There should only be either `css` or `regex` declared. If both are declared, `css` is used. 
 
 
+## Using sitecrawler as a library
+
+```python
+import asyncio
+
+from sitecrawler import SiteCrawler, do_extraction
+
+if __name__ == "__main__":
+    crawler = SiteCrawler("test_crawl", ["https://www.supermind.org"], max_pages=10)
+    asyncio.run(crawler.get_results())
+    print(crawler.stats)
+    do_extraction(crawler)
+```
+
+## Using sitecrawler from the command-line
+```bash
+source ./venv/bin/activate
+python3 sitecrawler.py --name=supermind --starting_urls="https://www.supermind.org"
+```
+
+## Running celery locally
+
+Celery is not needed to run the sitecrawler. You can run it as-is. If you do wish to run Celery locally, 
+in a terminal, this is how to start the celery worker:
+```bash
+source ./venv/bin/activate
+celery -A tasks worker --loglevel=INFO
+```
+
+You will also need Redis running locally. 
+
 ## Contributing
 
 The 4 files of interest are:
