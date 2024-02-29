@@ -19,6 +19,9 @@ from usp.tree import sitemap_tree_for_homepage
 from aiocrawler import AsyncCrawler
 from lmdb_collection import LmdbmDocumentCollection
 
+import urllib.parse as urlparse
+import uuid
+
 global_excludes = {"\\.jpg", "\\.jpeg", "\\.png", "\\.mp4", "\\.webp", "\\.gif", "\\.css", "\\.js", "\\.pdf"}
 logger = logging.getLogger('SiteCrawler')
 
@@ -291,7 +294,7 @@ class SiteCrawler(AsyncCrawler):
     def log_error_url(self, url, error_code: int, error_message: str):
         self.stats[error_code] += 1
         self.collection.add(url, error_message, type="error", error_code=error_code)
-        logging.error(url, error_code, error_message)
+        logging.error(f'{url}, {error_code}, {error_message}')
 
     def output(self, content_type: str, url: str, links: Set[str], content: Union[str, bytes],
                response_headers: CIMultiDictProxy[str]) -> Optional[Tuple[str, str]]:
@@ -347,6 +350,7 @@ def _extract_content(node: Node, rule: ExtractionRule) -> str:
 
 
 def do_extract(content: str, rules: ExtractionRules) -> dict:
+    content = remove_script(content)
     dom = HTMLParser(content)
     result = {}
     for r in rules.rules:
@@ -376,11 +380,70 @@ def do_extraction(crawler):
         else:
             if v["type"] == "content" and v["parsed_hash"] != parsed_hash:
                 result = do_extract(v["_content"], crawler.extraction_rules)
+                # Default extraction for Facet on Based on URL
+                result['uri'] = k
+                result['path_s'] = get_path(k)
+                result['typeUrl_s'] = get_type_from_url(k)
+                result['id'] = get_id(k)
                 v.update(result)
-                print(k, result)
+                # print(k, result)
                 v["parsed_hash"] = parsed_hash
                 crawler.collection[k] = v
 
+def remove_script(content):
+    isScript = False
+    retVal = []
+    scriptStart = ["<script","<style","<noscript", "<footer", "<nav"]
+    scriptEnd = ["</script","</style","</noscript", "</footer", "</nav"]
+    # Loop through all the lines
+    for line in content.split('\n'):
+        isScriptCounter = 0
+        isScriptCounterChanged = False
+        # Increment counter if starting script tag is found
+        for item in scriptStart:
+            if item in line:
+                count = line.count(item)
+                isScriptCounterChanged= True
+                isScriptCounter = isScriptCounter + count
+        # Decrement counter if end script tag is found 
+        for item in scriptEnd:
+            if item in line:
+                count = line.count(item)
+                isScriptCounterChanged= True
+                isScriptCounter = isScriptCounter - count
+        # If script tag found, see if next line is a script or not.
+        if isScriptCounterChanged:
+            if isScriptCounter > 0:
+                isScript = True
+            else:
+                isScript = False
+        
+        if not isScriptCounterChanged and not isScript:
+            retVal.append(line)
+        
+    return " ".join(retVal)
+
+
+def get_id(url_string):
+    return str(uuid.uuid3(uuid.NAMESPACE_URL, url_string))
+
+def get_path(url_string):
+    url_parse = urlparse.urlparse(url_string)
+    path_str = url_parse.path.strip('/').replace('/', ' / ')
+    if not path_str:
+        path_str = url_parse.netloc
+    return path_str
+
+def get_type_from_url(url_string):
+    url_parse = urlparse.urlparse(url_string)
+    pagetype = url_parse.path.strip('/').split('/')[0].title()
+    if "-" in pagetype:
+        pagetype = " ".join(pagetype.split("-")).title()
+    if "_" in pagetype:
+        pagetype = " ".join(pagetype.split("_")).title()
+    if not pagetype:
+        return "Web Page"
+    return pagetype
 
 if __name__ == '__main__':
     import sys
