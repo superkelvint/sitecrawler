@@ -52,7 +52,7 @@ async def list_active_crawls():
 @app.get("/browse/{name}/")
 @app.get("/browse/{name}")
 async def browse_results(name: str, page: int = Query(default=0, ge=0)):
-    collection: LmdbmDocumentCollection = LmdbmDocumentCollection(f"{name}.crawl")
+    collection: LmdbmDocumentCollection = LmdbmDocumentCollection(f"data/{name}.crawl")
 
     # FIXME: fully populate all content here. Right now we only print the keys
     items = list(collection.filter_keys("type", "content"))
