@@ -126,3 +126,6 @@ dmypy.json
 
 *.mdb
 *.lock
+
+localrun.py
+localrun.py

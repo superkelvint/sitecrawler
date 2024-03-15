@@ -11,6 +11,12 @@ app = FastAPI()
 running_jobs = set()
 
 
+@app.get("/health")
+@app.get("/health/")
+async def crawl_health():
+    #FIXME: Get connectivity details of unstructured and Redis and determine health
+    return {"health": "GREEN"}
+
 @app.post("/crawl/")
 @app.post("/crawl")
 async def submit_crawl(data: dict = Body(...)):

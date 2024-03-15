@@ -22,9 +22,14 @@ from lmdb_collection import LmdbmDocumentCollection
 import urllib.parse as urlparse
 import uuid
 
+from lxml.html.clean import Cleaner
+
 global_excludes = {"\\.jpg", "\\.jpeg", "\\.png", "\\.mp4", "\\.webp", "\\.gif", "\\.css", "\\.js", "\\.pdf"}
 logger = logging.getLogger('SiteCrawler')
 
+is_clean_javascript = True
+is_clean_style = True
+kill_tags = ['noscript','footer', 'header', 'nav', 'button', 'form']
 
 class ExtractionRule(BaseModel):
     field_name: str
@@ -32,6 +37,8 @@ class ExtractionRule(BaseModel):
     regex: Optional[str] = None
     delimiter: Optional[str] = None
     attribute: Optional[str] = None
+    fixedval: Optional[str] = None
+    default_value: Optional[str] = None
 
 
 class ExtractionRules(BaseModel):
@@ -44,6 +51,7 @@ class ExtractionRules(BaseModel):
 class SiteCrawler(AsyncCrawler):
     timeout = 10
     max_redirects = 2
+    
 
     def __init__(self,
                  name: str,
@@ -350,20 +358,24 @@ def _extract_content(node: Node, rule: ExtractionRule) -> str:
 
 
 def do_extract(content: str, rules: ExtractionRules) -> dict:
-    content = remove_script(content)
-    dom = HTMLParser(content)
+    dom = HTMLParser(dom_cleaner(content))
     result = {}
     for r in rules.rules:
         if r.css:
             results = dom.css(r.css)
+            if len(results) == 0:
+                if r.default_value:
+                    result[r.field_name] = r.default_value
             if len(results) == 1:
                 result[r.field_name] = _extract_content(results[0], r)
             elif len(results) > 1:
                 result[r.field_name] = [_extract_content(n, r) for n in results]
-        else:
+        elif r.regex:
             matches = re.findall(r.regex, content)
             if len(matches) > 0:
                 result[r.field_name] = matches[0].strip()
+        elif r.fixedval:
+            result[r.field_name] = r.fixedval
         if r.field_name not in result:
             result[r.field_name] = ""
     return result
@@ -384,47 +396,21 @@ def do_extraction(crawler):
                 result['uri'] = k
                 result['path_s'] = get_path(k)
                 result['typeUrl_s'] = get_type_from_url(k)
-                result['id'] = get_id(k)
+                result['id'] = create_id(k)
                 v.update(result)
                 # print(k, result)
                 v["parsed_hash"] = parsed_hash
                 crawler.collection[k] = v
 
-def remove_script(content):
-    isScript = False
-    retVal = []
-    scriptStart = ["<script","<style","<noscript", "<footer", "<nav"]
-    scriptEnd = ["</script","</style","</noscript", "</footer", "</nav"]
-    # Loop through all the lines
-    for line in content.split('\n'):
-        isScriptCounter = 0
-        isScriptCounterChanged = False
-        # Increment counter if starting script tag is found
-        for item in scriptStart:
-            if item in line:
-                count = line.count(item)
-                isScriptCounterChanged= True
-                isScriptCounter = isScriptCounter + count
-        # Decrement counter if end script tag is found 
-        for item in scriptEnd:
-            if item in line:
-                count = line.count(item)
-                isScriptCounterChanged= True
-                isScriptCounter = isScriptCounter - count
-        # If script tag found, see if next line is a script or not.
-        if isScriptCounterChanged:
-            if isScriptCounter > 0:
-                isScript = True
-            else:
-                isScript = False
-        
-        if not isScriptCounterChanged and not isScript:
-            retVal.append(line)
-        
-    return " ".join(retVal)
+def dom_cleaner(content):
+    cleaner = Cleaner()
+    cleaner.javascript = is_clean_javascript
+    cleaner.style = is_clean_style
+    cleaner.kill_tags = kill_tags
 
+    return cleaner.clean_html(content)
 
-def get_id(url_string):
+def create_id(url_string):
     return str(uuid.uuid3(uuid.NAMESPACE_URL, url_string))
 
 def get_path(url_string):
