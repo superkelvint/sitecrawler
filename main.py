@@ -51,22 +51,33 @@ async def list_active_crawls():
 
 @app.get("/browse/{name}/")
 @app.get("/browse/{name}")
-async def browse_results(name: str, page: int = Query(default=0, ge=0)):
+async def browse_results(name: str, page: int = Query(default=0, ge=0), rows: int = Query(default=20, ge=0, lt=50)):
     collection: LmdbmDocumentCollection = LmdbmDocumentCollection(f"data/{name}.crawl")
 
-    # FIXME: fully populate all content here. Right now we only print the keys
-    items = list(collection.filter_keys("type", "content"))
+    items = list(collection.filter_keys("type", "content"))    
 
-    per_page = 20  # Number of items per page
+    per_page = rows  # Number of items per page
     start = page * per_page  # Calculate start and end for slicing
     end = start + per_page
     total_pages = len(items) // per_page + (1 if len(items) % per_page else 0)  # Calculate total pages
     context = {}
     context["name"] = name
-    context["items"] = items[start:end]
     context["page"] = page
     context["total_pages"] = total_pages
     context["num_records"] = len(items)
+
+    item_return_obj = []
+    for key in items[start:end]:
+        obj = collection[key]
+        del obj['parsed_hash']
+        del obj['_content']
+        del obj['crawled']
+        del obj['type']
+        item_return_obj.append(obj)
+    
+    context["items"] = item_return_obj
+
+
     return context
 
 
