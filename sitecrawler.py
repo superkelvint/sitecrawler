@@ -23,13 +23,15 @@ import urllib.parse as urlparse
 import uuid
 
 from lxml.html.clean import Cleaner
+import requests
 
-global_excludes = {"\\.jpg", "\\.jpeg", "\\.png", "\\.mp4", "\\.webp", "\\.gif", "\\.css", "\\.js", "\\.pdf"}
+global_excludes = {"\\.jpg", "\\.jpeg", "\\.png", "\\.mp4", "\\.webp", "\\.gif", "\\.css", "\\.js"}
 logger = logging.getLogger('SiteCrawler')
 
 is_clean_javascript = True
 is_clean_style = True
 kill_tags = ['noscript','footer', 'header', 'nav', 'button', 'form']
+unstructured_url = 'http://localhost:8005'
 
 class ExtractionRule(BaseModel):
     field_name: str
@@ -380,6 +382,25 @@ def do_extract(content: str, rules: ExtractionRules) -> dict:
             result[r.field_name] = ""
     return result
 
+def _extract_binary_content(result, bytestream):
+    headers = {
+        'accept': 'application/json'
+    }
+    a = urlparse.urlparse(result['uri'])
+    filename = os.path.basename(a.path)
+    files = {
+        'files' : (filename, bytestream),
+        'strategy': (None,'auto')
+    }
+    resp = requests.post(f'{unstructured_url}/general/v0/general', headers=headers, files=files)
+    if resp.status_code == 200:
+        text_blob = ' '.join([line['text'] for line in resp.json()])
+        title = resp.json()[0]['metadata']['filename']
+        result['_content'] = text_blob
+        result['title'] = title
+    return result
+
+
 
 def do_extraction(crawler):
     if crawler.extraction_rules is None or len(crawler.extraction_rules.rules) == 0:
@@ -397,6 +418,9 @@ def do_extraction(crawler):
                 result['path_s'] = get_path(k)
                 result['typeUrl_s'] = get_type_from_url(k)
                 result['id'] = create_id(k)
+
+                if v['content_type'] != 'text/html':
+                    result = _extract_binary_content(result, crawler.collection.get_binary(k))
                 v.update(result)
                 # print(k, result)
                 v["parsed_hash"] = parsed_hash
