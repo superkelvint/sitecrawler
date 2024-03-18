@@ -39,7 +39,7 @@ class ExtractionRule(BaseModel):
     regex: Optional[str] = None
     delimiter: Optional[str] = None
     attribute: Optional[str] = None
-    fixedval: Optional[str] = None
+    fixed_value: Optional[str] = None
     default_value: Optional[str] = None
 
 
@@ -376,8 +376,8 @@ def do_extract(content: str, rules: ExtractionRules) -> dict:
             matches = re.findall(r.regex, content)
             if len(matches) > 0:
                 result[r.field_name] = matches[0].strip()
-        elif r.fixedval:
-            result[r.field_name] = r.fixedval
+        elif r.fixed_value:
+            result[r.field_name] = r.fixed_value
         if r.field_name not in result:
             result[r.field_name] = ""
     return result

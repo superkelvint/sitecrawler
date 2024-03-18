@@ -13,6 +13,7 @@ It is designed for speed:
 - asyncio
 - selectolax for fast HTML parsing
 - LMDB for high read/write performance
+- Unstructured API for file extraction
 
 ## Features
 - [x] Multiple starting URLs
@@ -25,9 +26,9 @@ It is designed for speed:
 - [x] Celery integration
 - [x] Dockerized
 - [ ] Scheduling crawls
-- [ ] Return full downloaded content via /browse API
+- [x] Return full downloaded content via /browse API
 - [ ] Standard webpage metadata extractors
-- [ ] Integrate with unstructured to extract text from PDF, docx, pptx etc
+- [x] Integrate with unstructured to extract text from PDF, docx, pptx etc
 - [ ] Javascript rendering/parsing via https://splash.readthedocs.io/en/stable/
 - [ ] content_css_selector
 - [ ] if_modified_since_hours
@@ -100,9 +101,25 @@ The crawl job runs in 2 phases:
 
 Each phase runs as a separate Celery task. This means it should be possible to have different workers doing different tasks. 
 
-## Crawler configuration
+## APIs
+
+<details>
+  <summary><code>GET</code> <code><b>/health</b></code> <code>Health Check</code></summary>
+
+### Response
+ ```json
+{
+  "health": "GREEN"
+}
+```
+</details>
+
+<details>
+  <summary><code>POST</code> <code><b>/crawl</b></code> <code>Submit a new crawl</code></summary>
+
+### Request Object
 | **Name**                        | **Type**        | **Default**     | **Description**                                                                                                                                                                                                        |
-|---------------------------------|-----------------|-----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ------------------------------- | --------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **name**                        | string          |                 | Name of the crawl (required)                                                                                                                                                                                           |
 | **starting_urls**               | list of strings |                 | Starting URLs (required)                                                                                                                                                                                               |
 | **allowed_domains**             | list of strings |                 | Allowed domains. Additive with allow_starting_url_hostname and allow_starting_url_tld.                                                                                                                                 |
@@ -118,7 +135,7 @@ Each phase runs as a separate Celery task. This means it should be possible to h
 | **user_agent**                  | string          | SiteCrawler/1.0 | Crawler user-agent.                                                                                                                                                                                                    |
 | **extraction_rules**            | dictionary      |                 | See ExtractionRules section.                                                                                                                                                                                           |
 
-### Example
+#### Example
 ```json
 {
   "name": "supermind",
@@ -143,16 +160,109 @@ Each phase runs as a separate Celery task. This means it should be possible to h
 }
 ```
 
-## Extraction Rules
-| **Name**       | **Type** | **Description**                                                                                                    |
-|----------------|----------|--------------------------------------------------------------------------------------------------------------------|
-| **field_name** | string   | Name of the field                                                                                                  |
-| **css**        | string   | CSS selector.                                                                                                      |
-| **regex**      | string   | Regex. There must be 1 matching group.                                                                             |
-| **delimiter**  | string   | Not currently used.                                                                                                |
-| **attribute**  | string   | **CSS only**. If specifed, the HTML element attribute it extracted. Otherwise, the element text is used (default). |
+### Extraction Rules
+| **Name**          | **Type** | **Description**                                                                                                    |
+| ----------------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
+| **field_name**    | string   | Name of the field                                                                                                  |
+| **css**           | string   | CSS selector.                                                                                                      |
+| **regex**         | string   | Regex. There must be 1 matching group.                                                                             |
+| **delimiter**     | string   | Not currently used.                                                                                                |
+| **attribute**     | string   | **CSS only**. If specifed, the HTML element attribute it extracted. Otherwise, the element text is used (default). |
+| **fixed_value**   | string   | Populate the field with a fixed value. It can be useful if merging data from different sites                       |
+| **default_value** | string   | Default value to use if there is no match                                                                          |
 
 There should only be either `css` or `regex` declared. If both are declared, `css` is used. 
+### Response
+ ```json
+{
+  "id": "b67dbbbb-84c0-45c5-b467-85eb846c8988"
+}
+```
+</details>
+
+<details>
+  <summary><code>GET</code> <code><b>/crawl</b></code> <code>List all active crawl</code></summary>
+
+### Response
+ ```json
+{
+  "jobs": [
+    {
+      "id": "1fcfba77-03d4-47d1-9b3d-41ca5336c27d",
+      "status": "PENDING",
+      "info": null
+    }
+  ]
+}
+```
+</details>
+
+<details>
+  <summary><code>GET</code> <code><b>/crawl/{job_id}</b></code> <code>Get details of crawl by its job ID</code></summary>
+
+### Response
+ ```json
+{
+  "id": "b67dbbbb-84c0-45c5-b467-85eb846c8988",
+  "status": "SUCCESS",
+  "info": {
+    "name": "test",
+    "stats": {
+      "total": 1,
+      "cached": 1
+    },
+    "start_time": "2024-03-18 17:16:52.552218+0000 (UTC)",
+    "end_time": "2024-03-18 17:16:52.583229+0000 (UTC)",
+    "duration": "less than a second"
+  }
+}
+```
+</details>
+
+<details>
+  <summary><code>DELETE</code> <code><b>/crawl/{job_id}</b></code> <code>Stop the crawl</code></summary>
+
+### Response
+ ```json
+{
+  "jobs": [
+    {
+      "id": "1fcfba77-03d4-47d1-9b3d-41ca5336c27d",
+      "status": "PENDING",
+      "info": null
+    }
+  ]
+}
+```
+</details>
+
+<details>
+  <summary><code>GET</code> <code><b>/browse/{name}</b></code> <code>Get contents of the crawl</code></summary>
+
+### Parameters
+| name        | data type | description              |
+| ----------- | --------- | ------------------------ |
+| page        | int       | Page number              |
+| rows        | int       | Number of items per page |
+| fullcontent | bool      | Return unparsed content  |
+
+### Response
+ ```json
+{
+  "jobs": [
+    {
+      "id": "1fcfba77-03d4-47d1-9b3d-41ca5336c27d",
+      "status": "PENDING",
+      "info": null
+    }
+  ]
+}
+```
+</details>
+
+
+
+
 
 
 ## Using sitecrawler as a library
