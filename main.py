@@ -51,7 +51,11 @@ async def list_active_crawls():
 
 @app.get("/browse/{name}/")
 @app.get("/browse/{name}")
-async def browse_results(name: str, page: int = Query(default=0, ge=0), rows: int = Query(default=20, ge=0, lt=50)):
+async def browse_results(
+    name: str, 
+    page: int = Query(default=0, ge=0), 
+    rows: int = Query(default=20, ge=0, lt=50),
+    fullcontent: bool = Query(default=False)):
     collection: LmdbmDocumentCollection = LmdbmDocumentCollection(f"data/{name}.crawl")
 
     items = list(collection.filter_keys("type", "content"))    
@@ -69,8 +73,9 @@ async def browse_results(name: str, page: int = Query(default=0, ge=0), rows: in
     item_return_obj = []
     for key in items[start:end]:
         obj = collection[key]
+        if not fullcontent:
+            del obj['_content']
         del obj['parsed_hash']
-        del obj['_content']
         del obj['crawled']
         del obj['type']
         item_return_obj.append(obj)
