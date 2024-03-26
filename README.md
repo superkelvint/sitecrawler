@@ -249,16 +249,16 @@ There should only be either `css` or `regex` declared. If both are declared, `cs
 ### Response
  ```json
 {
-  "name": "ppttest",
+  "name": "test_crawl",
   "page": 0,
   "total_pages": 1,
   "num_records": 1,
   "items": [
     {
       "server_last_modified": "Fri, 16 Feb 2024 15:43:40 GMT",
-      "_content": "Design Guidelines  Historic Preservation and Zoning Committee\u000bAugust 15, 2023 Agenda Neighborhood Conservation Zoning Overlays Design Guidelines Parameters What is reviewed New construction Additions Demolition Relocation Setback determinations What is not How structure is used Small structures (under 100 square feet)  Temporary structures (less than 90 days) Robin Zeigler, MHZC Historic Zoning Administrator John Farringer, RWENA Historic Preservation and Zoning Committee Discussion Outbuildings Clarification on the methodology for measuring heights, etc. Other Potential RWENA Chapter-Specific Topics Next Steps Consensus to move forward toward Consolidated Guidelines RWENA Historic Preservation and Zoning Committee to clarify and incorporate chapter specific suggestions MHZC staff to review and refine chapter specific language Community meeting for neighborhood consensus Additional edits if needed Community meeting if needed Historic Zoning Commission consideration/approval",
+      "_content": "xyz file content",
       "content_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      "title": "RWENA_DG_Revision.pptx",
+      "title": "filename.pptx",
       "description": "",
       "metacategory_ss": "",
       "metaproducts_ss": "",
@@ -268,8 +268,8 @@ There should only be either `css` or `regex` declared. If both are declared, `cs
       "h2list": "",
       "h3list": "",
       "h4list": "",
-      "uri": "https://...REDACTED.../RWENA_DG_Revision.pptx",
-      "path_s": "sites / default / files / 2024-02 / RWENA_DG_Revision.pptx",
+      "uri": "https://...REDACTED.../filename.pptx",
+      "path_s": "sites / default / files / 2024-02 / filename.pptx",
       "typeUrl_s": "Sites",
       "id": "07794058-2453-3a03-b292-1278da923e3d"
     }
