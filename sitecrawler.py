@@ -27,7 +27,8 @@ import requests
 import configparser
 import os
 import asyncio
-from zyte_api.aio.client import AsyncClient
+from zyte_api.aio.client import AsyncClient, create_session
+from zyte_api.aio.errors import RequestError
 
 global_excludes = {"\\.jpg", "\\.jpeg", "\\.png", "\\.mp4", "\\.webp", "\\.gif", "\\.css", "\\.js"}
 logger = logging.getLogger('SiteCrawler')
@@ -36,6 +37,7 @@ is_clean_javascript = True
 is_clean_style = True
 kill_tags = ['noscript','footer', 'header', 'nav', 'button', 'form']
 unstructured_url = 'http://localhost:8005'
+zyte_api_conns = 15
 
 class ExtractionRule(BaseModel):
     field_name: str
@@ -411,37 +413,43 @@ def _extract_binary_content(result, bytestream):
         result['title'] = title
     return result
 
-async def _do_ai_parsing(result):
+async def _do_ai_parsing(requests):
     client = AsyncClient()
-    api_response = await client.request_raw(
-        {
-            "url": result['uri'],
-            "httpResponseBody": False,
-            "article": True,
-            "articleOptions": {
-                "extractFrom": "httpResponseBody"
-            }
-        }
-    )
-    article = api_response['article']
-    if 'headline' in article:
-        result['title'] = article['headline']
-    if 'articleBody' in article:
-        result['content'] = article['articleBody']
-    if 'description' in article:
-        result['description'] = article['description']
-    if 'mainImage' in article:
-        result['image'] = article['mainImage']['url']
-    if 'datePublishedRaw' in article:
-        result['datePublishedRaw'] = article['datePublishedRaw']
-    if 'dateModifiedRaw' in article:
-        result['dateModifiedRaw'] = article['dateModifiedRaw']
-    return result
+    resp_obj = []
+    async with create_session(zyte_api_conns) as session:
+        res_iter = client.request_parallel_as_completed(requests, session=session)
+        for fut in res_iter:
+            try:
+                res = await fut
+                resp = {
+                    'uri': res['url']
+                }
+                article = res['article']
+                if 'headline' in article:
+                    resp['title'] = article['headline']
+                if 'articleBody' in article:
+                    resp['content'] = article['articleBody']
+                if 'description' in article:
+                    resp['description'] = article['description']
+                if 'mainImage' in article:
+                    resp['image'] = article['mainImage']['url']
+                if 'datePublishedRaw' in article:
+                    resp['datePublishedRaw'] = article['datePublishedRaw']
+                if 'dateModifiedRaw' in article:
+                    resp['dateModifiedRaw'] = article['dateModifiedRaw']
+                resp_obj.append(resp)
+            except RequestError as e:
+                print(e)
+                raise
+    return resp_obj
 
-def do_extraction(crawler):
+
+async def do_extraction(crawler):
     if crawler.extraction_rules is None or len(crawler.extraction_rules.rules) == 0:
         return
     parsed_hash = crawler.extraction_rules.compute_hash()
+
+    ai_requests = []
 
     for k, v in crawler.collection.items():
         if crawler.collection.is_binary_key(k):
@@ -456,7 +464,15 @@ def do_extraction(crawler):
                 result['id'] = create_id(k)
 
                 if v['content_type'] == 'text/html' and crawler.ai_parsing:
-                    result = asyncio.run(_do_ai_parsing(result))
+                    ai_requests.append({
+                        "url": k,
+                        "httpResponseBody": False,
+                        "article": True,
+                        "articleOptions": {
+                            "extractFrom": "httpResponseBody"
+                        }
+                    })
+                    # result = asyncio.run(_do_ai_parsing(result))
 
                 if v['content_type'] != 'text/html':
                     result = _extract_binary_content(result, crawler.collection.get_binary(k))
@@ -465,6 +481,17 @@ def do_extraction(crawler):
                 # print(k, result)
                 v["parsed_hash"] = parsed_hash
                 crawler.collection[k] = v
+    
+    if crawler.ai_parsing and len(ai_requests) > 0:
+        results = await _do_ai_parsing(ai_requests)
+
+        for result in results:
+            # print(result)
+            key = result['uri']
+            val = crawler.collection[key]
+            val.update(result)
+            crawler.collection[key] = val
+
 
 def dom_cleaner(content):
     cleaner = Cleaner()

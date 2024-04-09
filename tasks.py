@@ -54,7 +54,7 @@ def start_extraction(json_spec: Union[dict, str]):
         crawler = SiteCrawler(**json_spec)
     else:
         raise Exception("Invalid input", json_spec)
-    do_extraction(crawler)
+    asyncio.run(do_extraction(crawler))
     # we can notify the user or call a webhook here
 
 
