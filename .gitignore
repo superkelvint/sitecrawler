@@ -128,3 +128,4 @@ dmypy.json
 *.lock
 
 localrun.py
+*.cfg

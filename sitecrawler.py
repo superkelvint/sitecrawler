@@ -24,6 +24,10 @@ import uuid
 
 from lxml.html.clean import Cleaner
 import requests
+import configparser
+import os
+import asyncio
+from zyte_api.aio.client import AsyncClient
 
 global_excludes = {"\\.jpg", "\\.jpeg", "\\.png", "\\.mp4", "\\.webp", "\\.gif", "\\.css", "\\.js"}
 logger = logging.getLogger('SiteCrawler')
@@ -76,9 +80,16 @@ class SiteCrawler(AsyncCrawler):
                  extraction_rules: Union[ExtractionRules, str, dict] = None,
                  user_agent: str = 'SiteCrawler/1.0',
                  data_dir: str = "data",
-                 init_collection: bool = True
+                 init_collection: bool = True,
                  # primarily used for testing purposes to bypass creation of lmdb collection
+                 ai_parsing: bool = False
                  ) -> None:
+        config = configparser.ConfigParser()
+        config.read('config.cfg')
+        zyte_api_key = config.get('DEFAULT','ZYTE_API_KEY')
+        os.environ['ZYTE_API_KEY'] = zyte_api_key
+        self.ai_parsing = ai_parsing
+
         if (isinstance(starting_urls, str)):
             starting_urls = [starting_urls]
 
@@ -396,11 +407,36 @@ def _extract_binary_content(result, bytestream):
     if resp.status_code == 200:
         text_blob = ' '.join([line['text'] for line in resp.json()])
         title = resp.json()[0]['metadata']['filename']
-        result['_content'] = text_blob
+        result['content'] = text_blob
         result['title'] = title
     return result
 
-
+async def _do_ai_parsing(result):
+    client = AsyncClient()
+    api_response = await client.request_raw(
+        {
+            "url": result['uri'],
+            "httpResponseBody": False,
+            "article": True,
+            "articleOptions": {
+                "extractFrom": "httpResponseBody"
+            }
+        }
+    )
+    article = api_response['article']
+    if 'headline' in article:
+        result['title'] = article['headline']
+    if 'articleBody' in article:
+        result['content'] = article['articleBody']
+    if 'description' in article:
+        result['description'] = article['description']
+    if 'mainImage' in article:
+        result['image'] = article['mainImage']['url']
+    if 'datePublishedRaw' in article:
+        result['datePublishedRaw'] = article['datePublishedRaw']
+    if 'dateModifiedRaw' in article:
+        result['dateModifiedRaw'] = article['dateModifiedRaw']
+    return result
 
 def do_extraction(crawler):
     if crawler.extraction_rules is None or len(crawler.extraction_rules.rules) == 0:
@@ -419,9 +455,13 @@ def do_extraction(crawler):
                 result['typeUrl_s'] = get_type_from_url(k)
                 result['id'] = create_id(k)
 
+                if v['content_type'] == 'text/html' and crawler.ai_parsing:
+                    result = asyncio.run(_do_ai_parsing(result))
+
                 if v['content_type'] != 'text/html':
                     result = _extract_binary_content(result, crawler.collection.get_binary(k))
                 v.update(result)
+
                 # print(k, result)
                 v["parsed_hash"] = parsed_hash
                 crawler.collection[k] = v
