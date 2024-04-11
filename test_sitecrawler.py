@@ -1,8 +1,66 @@
+import asyncio
+import inspect
 import json
 import time
 import unittest
+import asynctest
+from unittest.mock import AsyncMock, MagicMock
+from sitecrawler import _do_ai_parsing, RequestError
+from asyncio import Future
 
 from sitecrawler import SiteCrawler, ExtractionRules, do_extract
+import os
+import configparser
+from typing import Iterator, Any
+
+class AwaitableMock(AsyncMock):
+    def __await__(self) :
+        # self.await_count += 1
+        return self.return_value
+
+class TestDoAIParsing(asynctest.TestCase):
+    async def setUp(self):
+        config = configparser.ConfigParser()
+        config.read('config.cfg')
+        os.environ['ZYTE_API_KEY'] = config.get('DEFAULT', 'ZYTE_API_KEY')
+        self.requests = [{'url': 'https://www.searchstax.com/', 'article': True}]
+        self.client = asynctest.CoroutineMock()
+        self.session = asynctest.CoroutineMock()
+        self.create_session = asynctest.CoroutineMock(return_value=self.session)
+
+    async def test_do_ai_parsing_success(self):
+        article = {
+            'headline': 'Test Headline',
+            'articleBody': 'Test Body',
+            'description': 'Test Description',
+            'mainImage': {'url': 'https://www.example.com/image.jpg'},
+            'datePublishedRaw': '2022-01-01',
+            'dateModifiedRaw': '2022-01-02'
+        }
+        client = MagicMock()
+        mock = AsyncMock()
+        mock.return_value = {'url': 'https://www.searchstax.com/', 'article': article}
+
+        client.request_parallel_as_completed.return_value = [mock]
+
+        with unittest.mock.patch('sitecrawler.AsyncClient', return_value=client):
+            # print(await client.request_parallel_as_completed()[0])
+            resp_obj = await _do_ai_parsing(self.requests)
+            self.assertEqual(len(resp_obj), 1)
+            self.assertEqual(resp_obj[0]['uri'], 'https://www.searchstax.com/')
+            self.assertEqual(resp_obj[0]['title'], 'Test Headline')
+            self.assertEqual(resp_obj[0]['content'], 'Test Body')
+            self.assertEqual(resp_obj[0]['description'], 'Test Description')
+            self.assertEqual(resp_obj[0]['image'], 'https://www.example.com/image.jpg')
+            self.assertEqual(resp_obj[0]['datePublishedRaw'], '2022-01-01')
+            self.assertEqual(resp_obj[0]['dateModifiedRaw'], '2022-01-02')
+
+    # async def test_do_ai_parsing_request_error(self):
+    #     self.client.request_parallel_as_completed = asynctest.CoroutineMock(side_effect=RequestError('Error', response_content='', history=''))
+    #     with self.assertLogs(level='ERROR') as cm:
+    #         resp_obj = await _do_ai_parsing(self.requests)
+    #     self.assertEqual(len(resp_obj), 0)
+    #     self.assertIn('Error', cm.output[0])
 
 
 class TestSiteCrawler(unittest.TestCase):

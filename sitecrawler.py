@@ -86,11 +86,18 @@ class SiteCrawler(AsyncCrawler):
                  # primarily used for testing purposes to bypass creation of lmdb collection
                  ai_parsing: bool = False
                  ) -> None:
-        config = configparser.ConfigParser()
-        config.read('config.cfg')
-        zyte_api_key = config.get('DEFAULT','ZYTE_API_KEY')
-        os.environ['ZYTE_API_KEY'] = zyte_api_key
-        self.ai_parsing = ai_parsing
+        
+        if ai_parsing:
+            try:
+                config = configparser.ConfigParser()
+                config.read('config.cfg')
+                zyte_api_key = config.get('DEFAULT','ZYTE_API_KEY')
+                os.environ['ZYTE_API_KEY'] = zyte_api_key
+                self.ai_parsing = ai_parsing
+            except FileNotFoundError:
+                raise FileNotFoundError("Config file not found")
+            except configparser.NoOptionError:
+                raise ValueError("ZYTE_API_KEY not found in config file")
 
         if (isinstance(starting_urls, str)):
             starting_urls = [starting_urls]
@@ -439,8 +446,8 @@ async def _do_ai_parsing(requests):
                     resp['dateModifiedRaw'] = article['dateModifiedRaw']
                 resp_obj.append(resp)
             except RequestError as e:
-                print(e)
-                raise
+                logging.error(f'{e}')
+                raise e
     return resp_obj
 
 
