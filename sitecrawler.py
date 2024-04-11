@@ -501,7 +501,7 @@ async def do_extraction(crawler):
 
 
 def dom_cleaner(content):
-    cleaner = Cleaner()
+    cleaner = Cleaner(page_structure=False)
     cleaner.javascript = is_clean_javascript
     cleaner.style = is_clean_style
     cleaner.kill_tags = kill_tags
