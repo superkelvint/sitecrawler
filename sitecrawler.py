@@ -447,7 +447,7 @@ async def _do_ai_parsing(requests):
                 resp_obj.append(resp)
             except RequestError as e:
                 logging.error(f'{e}')
-                raise e
+                # raise e
     return resp_obj
 
 
