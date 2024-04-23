@@ -32,6 +32,7 @@ It is designed for speed:
 - [ ] Javascript rendering/parsing via https://splash.readthedocs.io/en/stable/
 - [ ] content_css_selector
 - [ ] if_modified_since_hours
+- [x] Zyte API for automatic data extraction
 
 ## Installation
 
@@ -43,6 +44,15 @@ docker compose up --build
 
 The FastAPI crawler API server is now available at [http://localhost:8000](http://localhost:8000).
 The OpenAPI spec is available at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+## Enabling Zyte API for automatic extraction
+
+This step is purely optional. It is only required if you want to utilize Zyte API to automatically extract page Title, Description, Content, and Image. 
+```bash
+cp config.cfg.sample config.cfg
+```
+You can then paste your Zyte API key in the config file.
+
 
 ## Starting your first crawl
 
@@ -134,6 +144,7 @@ Each phase runs as a separate Celery task. This means it should be possible to h
 | **allow_starting_url_tld**      | boolean         | false           | Allow all links with the same TLD as starting URLs.                                                                                                                                                                    |
 | **user_agent**                  | string          | SiteCrawler/1.0 | Crawler user-agent.                                                                                                                                                                                                    |
 | **extraction_rules**            | dictionary      |                 | See ExtractionRules section.                                                                                                                                                                                           |
+| **ai_parsing**                  | boolean         | false           | Automatically extract Title, Description, Content, and Image using AI parsing |
 
 #### Example
 ```json
