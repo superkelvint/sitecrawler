@@ -24,6 +24,11 @@ import uuid
 
 from lxml.html.clean import Cleaner
 import requests
+import configparser
+import os
+import asyncio
+from zyte_api.aio.client import AsyncClient, create_session
+from zyte_api.aio.errors import RequestError
 
 global_excludes = {"\\.jpg", "\\.jpeg", "\\.png", "\\.mp4", "\\.webp", "\\.gif", "\\.css", "\\.js"}
 logger = logging.getLogger('SiteCrawler')
@@ -32,6 +37,7 @@ is_clean_javascript = True
 is_clean_style = True
 kill_tags = ['noscript','footer', 'header', 'nav', 'button', 'form']
 unstructured_url = 'http://localhost:8005'
+zyte_api_conns = 15
 
 class ExtractionRule(BaseModel):
     field_name: str
@@ -76,9 +82,23 @@ class SiteCrawler(AsyncCrawler):
                  extraction_rules: Union[ExtractionRules, str, dict] = None,
                  user_agent: str = 'SiteCrawler/1.0',
                  data_dir: str = "data",
-                 init_collection: bool = True
+                 init_collection: bool = True,
                  # primarily used for testing purposes to bypass creation of lmdb collection
+                 ai_parsing: bool = False
                  ) -> None:
+        
+        if ai_parsing:
+            try:
+                config = configparser.ConfigParser()
+                config.read('config.cfg')
+                zyte_api_key = config.get('DEFAULT','ZYTE_API_KEY')
+                os.environ['ZYTE_API_KEY'] = zyte_api_key
+                self.ai_parsing = ai_parsing
+            except FileNotFoundError:
+                raise FileNotFoundError("Config file not found")
+            except configparser.NoOptionError:
+                raise ValueError("ZYTE_API_KEY not found in config file")
+
         if (isinstance(starting_urls, str)):
             starting_urls = [starting_urls]
 
@@ -396,16 +416,47 @@ def _extract_binary_content(result, bytestream):
     if resp.status_code == 200:
         text_blob = ' '.join([line['text'] for line in resp.json()])
         title = resp.json()[0]['metadata']['filename']
-        result['_content'] = text_blob
+        result['content'] = text_blob
         result['title'] = title
     return result
 
+async def _do_ai_parsing(requests):
+    client = AsyncClient()
+    resp_obj = []
+    async with create_session(zyte_api_conns) as session:
+        res_iter = client.request_parallel_as_completed(requests, session=session)
+        for fut in res_iter:
+            try:
+                res = await fut
+                resp = {
+                    'uri': res['url']
+                }
+                article = res['article']
+                if 'headline' in article:
+                    resp['title'] = article['headline']
+                if 'articleBody' in article:
+                    resp['content'] = article['articleBody']
+                if 'description' in article:
+                    resp['description'] = article['description']
+                if 'mainImage' in article:
+                    resp['image'] = article['mainImage']['url']
+                if 'datePublishedRaw' in article:
+                    resp['datePublishedRaw'] = article['datePublishedRaw']
+                if 'dateModifiedRaw' in article:
+                    resp['dateModifiedRaw'] = article['dateModifiedRaw']
+                resp_obj.append(resp)
+            except RequestError as e:
+                logging.error(f'{e}')
+                # raise e
+    return resp_obj
 
 
-def do_extraction(crawler):
+async def do_extraction(crawler):
     if crawler.extraction_rules is None or len(crawler.extraction_rules.rules) == 0:
         return
     parsed_hash = crawler.extraction_rules.compute_hash()
+
+    ai_requests = []
 
     for k, v in crawler.collection.items():
         if crawler.collection.is_binary_key(k):
@@ -419,15 +470,38 @@ def do_extraction(crawler):
                 result['typeUrl_s'] = get_type_from_url(k)
                 result['id'] = create_id(k)
 
+                if v['content_type'] == 'text/html' and crawler.ai_parsing:
+                    ai_requests.append({
+                        "url": k,
+                        "httpResponseBody": False,
+                        "article": True,
+                        "articleOptions": {
+                            "extractFrom": "httpResponseBody"
+                        }
+                    })
+                    # result = asyncio.run(_do_ai_parsing(result))
+
                 if v['content_type'] != 'text/html':
                     result = _extract_binary_content(result, crawler.collection.get_binary(k))
                 v.update(result)
+
                 # print(k, result)
                 v["parsed_hash"] = parsed_hash
                 crawler.collection[k] = v
+    
+    if crawler.ai_parsing and len(ai_requests) > 0:
+        results = await _do_ai_parsing(ai_requests)
+
+        for result in results:
+            # print(result)
+            key = result['uri']
+            val = crawler.collection[key]
+            val.update(result)
+            crawler.collection[key] = val
+
 
 def dom_cleaner(content):
-    cleaner = Cleaner()
+    cleaner = Cleaner(page_structure=False)
     cleaner.javascript = is_clean_javascript
     cleaner.style = is_clean_style
     cleaner.kill_tags = kill_tags
