@@ -92,12 +92,20 @@ class SiteCrawler(AsyncCrawler):
                              max_retries=max_retries, headers=headers)
         if denied_extensions is None:
             denied_extensions = []
+        if isinstance(denied_extensions, str):
+            denied_extensions = denied_extensions.split(",")
         if denied_regex is None:
             denied_regex = []
+        if isinstance(denied_regex, str):
+            denied_regex = denied_regex.split(",")
         if allowed_regex is None:
             allowed_regex = list()
+        if isinstance(allowed_regex, str):
+            allowed_regex = allowed_regex.split(",")
         if allowed_domains is None:
             allowed_domains = list()
+        if isinstance(allowed_domains, str):
+            allowed_domains = allowed_domains.split(",")
         if extraction_rules is None:
             extraction_rules = ExtractionRules(rules=[])
 
