@@ -19,9 +19,19 @@ from usp.tree import sitemap_tree_for_homepage
 from aiocrawler import AsyncCrawler
 from lmdb_collection import LmdbmDocumentCollection
 
-global_excludes = {"\\.jpg", "\\.jpeg", "\\.png", "\\.mp4", "\\.webp", "\\.gif", "\\.css", "\\.js", "\\.pdf"}
+import urllib.parse as urlparse
+import uuid
+
+from lxml.html.clean import Cleaner
+import requests
+
+global_excludes = {"\\.jpg", "\\.jpeg", "\\.png", "\\.mp4", "\\.webp", "\\.gif", "\\.css", "\\.js"}
 logger = logging.getLogger('SiteCrawler')
 
+is_clean_javascript = True
+is_clean_style = True
+kill_tags = ['noscript','footer', 'header', 'nav', 'button', 'form']
+unstructured_url = 'http://localhost:8005'
 
 class ExtractionRule(BaseModel):
     field_name: str
@@ -29,6 +39,8 @@ class ExtractionRule(BaseModel):
     regex: Optional[str] = None
     delimiter: Optional[str] = None
     attribute: Optional[str] = None
+    fixed_value: Optional[str] = None
+    default_value: Optional[str] = None
 
 
 class ExtractionRules(BaseModel):
@@ -41,6 +53,7 @@ class ExtractionRules(BaseModel):
 class SiteCrawler(AsyncCrawler):
     timeout = 10
     max_redirects = 2
+    
 
     def __init__(self,
                  name: str,
@@ -299,7 +312,7 @@ class SiteCrawler(AsyncCrawler):
     def log_error_url(self, url, error_code: int, error_message: str):
         self.stats[error_code] += 1
         self.collection.add(url, error_message, type="error", error_code=error_code)
-        logging.error(url, error_code, error_message)
+        logging.error(f'{url}, {error_code}, {error_message}')
 
     def output(self, content_type: str, url: str, links: Set[str], content: Union[str, bytes],
                response_headers: CIMultiDictProxy[str]) -> Optional[Tuple[str, str]]:
@@ -355,22 +368,46 @@ def _extract_content(node: Node, rule: ExtractionRule) -> str:
 
 
 def do_extract(content: str, rules: ExtractionRules) -> dict:
-    dom = HTMLParser(content)
+    dom = HTMLParser(dom_cleaner(content))
     result = {}
     for r in rules.rules:
         if r.css:
             results = dom.css(r.css)
+            if len(results) == 0:
+                if r.default_value:
+                    result[r.field_name] = r.default_value
             if len(results) == 1:
                 result[r.field_name] = _extract_content(results[0], r)
             elif len(results) > 1:
                 result[r.field_name] = [_extract_content(n, r) for n in results]
-        else:
+        elif r.regex:
             matches = re.findall(r.regex, content)
             if len(matches) > 0:
                 result[r.field_name] = matches[0].strip()
+        elif r.fixed_value:
+            result[r.field_name] = r.fixed_value
         if r.field_name not in result:
             result[r.field_name] = ""
     return result
+
+def _extract_binary_content(result, bytestream):
+    headers = {
+        'accept': 'application/json'
+    }
+    a = urlparse.urlparse(result['uri'])
+    filename = os.path.basename(a.path)
+    files = {
+        'files' : (filename, bytestream),
+        'strategy': (None,'auto')
+    }
+    resp = requests.post(f'{unstructured_url}/general/v0/general', headers=headers, files=files)
+    if resp.status_code == 200:
+        text_blob = ' '.join([line['text'] for line in resp.json()])
+        title = resp.json()[0]['metadata']['filename']
+        result['_content'] = text_blob
+        result['title'] = title
+    return result
+
 
 
 def do_extraction(crawler):
@@ -384,11 +421,47 @@ def do_extraction(crawler):
         else:
             if v["type"] == "content" and v["parsed_hash"] != parsed_hash:
                 result = do_extract(v["_content"], crawler.extraction_rules)
+                # Default extraction for Facet on Based on URL
+                result['uri'] = k
+                result['path_s'] = get_path(k)
+                result['typeUrl_s'] = get_type_from_url(k)
+                result['id'] = create_id(k)
+
+                if v['content_type'] != 'text/html':
+                    result = _extract_binary_content(result, crawler.collection.get_binary(k))
                 v.update(result)
-                print(k, result)
+                # print(k, result)
                 v["parsed_hash"] = parsed_hash
                 crawler.collection[k] = v
 
+def dom_cleaner(content):
+    cleaner = Cleaner()
+    cleaner.javascript = is_clean_javascript
+    cleaner.style = is_clean_style
+    cleaner.kill_tags = kill_tags
+
+    return cleaner.clean_html(content)
+
+def create_id(url_string):
+    return str(uuid.uuid3(uuid.NAMESPACE_URL, url_string))
+
+def get_path(url_string):
+    url_parse = urlparse.urlparse(url_string)
+    path_str = url_parse.path.strip('/').replace('/', ' / ')
+    if not path_str:
+        path_str = url_parse.netloc
+    return path_str
+
+def get_type_from_url(url_string):
+    url_parse = urlparse.urlparse(url_string)
+    pagetype = url_parse.path.strip('/').split('/')[0].title()
+    if "-" in pagetype:
+        pagetype = " ".join(pagetype.split("-")).title()
+    if "_" in pagetype:
+        pagetype = " ".join(pagetype.split("_")).title()
+    if not pagetype:
+        return "Web Page"
+    return pagetype
 
 if __name__ == '__main__':
     import sys

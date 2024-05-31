@@ -11,6 +11,12 @@ app = FastAPI()
 running_jobs = set()
 
 
+@app.get("/health")
+@app.get("/health/")
+async def crawl_health():
+    #FIXME: Get connectivity details of unstructured and Redis and determine health
+    return {"health": "GREEN"}
+
 @app.post("/crawl/")
 @app.post("/crawl")
 async def submit_crawl(data: dict = Body(...)):
@@ -45,22 +51,38 @@ async def list_active_crawls():
 
 @app.get("/browse/{name}/")
 @app.get("/browse/{name}")
-async def browse_results(name: str, page: int = Query(default=0, ge=0)):
-    collection: LmdbmDocumentCollection = LmdbmDocumentCollection(f"{name}.crawl")
+async def browse_results(
+    name: str, 
+    page: int = Query(default=0, ge=0), 
+    rows: int = Query(default=20, ge=0, lt=50),
+    fullcontent: bool = Query(default=False)):
+    collection: LmdbmDocumentCollection = LmdbmDocumentCollection(f"data/{name}.crawl")
 
-    # FIXME: fully populate all content here. Right now we only print the keys
-    items = list(collection.filter_keys("type", "content"))
+    items = list(collection.filter_keys("type", "content"))    
 
-    per_page = 20  # Number of items per page
+    per_page = rows  # Number of items per page
     start = page * per_page  # Calculate start and end for slicing
     end = start + per_page
     total_pages = len(items) // per_page + (1 if len(items) % per_page else 0)  # Calculate total pages
     context = {}
     context["name"] = name
-    context["items"] = items[start:end]
     context["page"] = page
     context["total_pages"] = total_pages
     context["num_records"] = len(items)
+
+    item_return_obj = []
+    for key in items[start:end]:
+        obj = collection[key]
+        if not fullcontent:
+            del obj['_content']
+        del obj['parsed_hash']
+        del obj['crawled']
+        del obj['type']
+        item_return_obj.append(obj)
+    
+    context["items"] = item_return_obj
+
+
     return context
 
 

@@ -9,6 +9,10 @@ from aiohttp import ClientSession, ClientResponseError, ClientTimeout
 from aiohttp.client_exceptions import TooManyRedirects
 from multidict import CIMultiDictProxy
 from selectolax.parser import HTMLParser
+from urllib3.util import create_urllib3_context
+import ssl
+import certifi
+# from urllib3 import PoolManager
 
 logger = logging.getLogger('AsyncCrawler')
 
@@ -94,13 +98,17 @@ class AsyncCrawler:
         logging.debug(f'Fetching: {url}')
         timeout = ClientTimeout(total=self.timeout)
 
+        ctx = create_urllib3_context(ciphers=":HIGH:!DH:!aNULL", ssl_minimum_version=ssl.TLSVersion.MINIMUM_SUPPORTED)
+        ctx.load_verify_locations(cafile=certifi.where())
+
         async with self.session.get(
                 url,
                 headers=self.headers,
                 raise_for_status=True,
                 timeout=timeout,
                 max_redirects=self.max_redirects,
-                verify_ssl=False,
+                # verify_ssl=False,
+                ssl_context=ctx
         ) as response:
 
             actual_url = response.url.human_repr()
@@ -211,6 +219,7 @@ class AsyncCrawler:
                     self.log_error_url(task.url, excp.status,
                                        f'Client error with status: {excp.status} at url: {task.url} from {task.source_url}')
             except ClientConnectionError as excp:
+                print(excp)
                 self.log_error_url(task.url, "connection_error", f'Connection error at url: {task.url}, skipping ....')
                 # await self.retry_task(task)
             except Exception as excp:
